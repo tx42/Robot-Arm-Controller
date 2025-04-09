@@ -9,6 +9,7 @@ float PIDController::calculate(float target, float current){
   float potential = error * p_gain;
   float integral = m_accum_error * i_gain;
   float derivative = (error - m_prev_error) * d_gain;
+  m_prev_error = error;
 
   return potential + integral + derivative;
 }
