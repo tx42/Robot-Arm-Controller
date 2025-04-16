@@ -11,6 +11,8 @@
 
 #define printval(name, val) Serial.print(name ":"); Serial.print(val); Serial.print(',')
 
+#define CLUTCH_THRESHOLD 5.0
+
 /*** HARDWARE CONSTANTS ***/
 #define MOTOR_A_PWR 8
 #define MOTOR_A_FWD 24
@@ -82,10 +84,10 @@ void setup(){
   // Arm setup
   arm_servo.attach(ARM_SERVO_PIN);
 
-  // PID setup
-  // pid_a.p_gain = 1.0;
-  // pid_a.i_gain = 0.1;
-  // pid_a.d_gain = 2.0;
+  // PID default values
+  pid_a.p_gain = 1.0;
+  pid_a.i_gain = 0.1;
+  pid_a.d_gain = 2.0;
 
   pid_b.p_gain = 30.5;
   pid_b.i_gain = 0.10;
@@ -101,6 +103,7 @@ void setup(){
 }
 
 bool arm_opened;
+bool clutch;
 
 void loop(){
   // manage arm
@@ -117,6 +120,8 @@ void loop(){
   digitalWrite(LED_PIN, motor_select);
 
   if(motor_select_btn.getButtonState() == DOWN){
+    // release clutch if switching motors
+    clutch = false;
     motor_select = !motor_select;
   }
 
@@ -125,34 +130,43 @@ void loop(){
   float i_gain = ((float) analogRead(I_SENSOR)) / 1023.0 * 10.0;
   float d_gain = ((float) analogRead(D_SENSOR)) / 1023.0 * 50.0;
 
-  // only if submit button is pressed
+  // update values only if submit button was pressed
   PIDController& target_pid = motor_select ? pid_a : pid_b;
-
   if(pid_submit_btn.getButtonState() == DOWN){
     target_pid.p_gain = p_gain;
     target_pid.i_gain = i_gain;
     target_pid.d_gain = d_gain;
   }
 
-  
-  // get target
-  float target = ((float) analogRead(ANGLE_SENSOR) / 1023.0) * 180.0;
-  // if(Serial.available()){
-  //   target = Serial.readStringUntil('\n').toFloat();
-  // }
+  // get new target
+  float knob_input = ((float) analogRead(ANGLE_SENSOR) / 1023.0);
+  float new_target;
 
-  if(!motor_select){
-    // motor b activated
-    target_b = target;
+  // setting the limits for motors
+  if(motor_select){
+    new_target = knob_input * 720.0;
   }else{
-    target_a = target * 6.0;
+    new_target = knob_input * 180.0;
   }
 
-  // collect the readings
+  float& cur_target_ref = motor_select ? target_a : target_b;
+
+  if(abs(cur_target_ref - new_target) < CLUTCH_THRESHOLD){
+    // if the target is close to cur target then clutch
+    clutch = true;
+  }
+
+  if(clutch){
+    // only follow new target if clutched
+    cur_target_ref = new_target;
+  }
+
+  // collect encoder readings
   int reading_a = encoder_a.reading;
   int reading_b = encoder_b.reading;
 
   // convert from ticks to angles
+  // why /530? calibration factor. Dividing by it gave us ~ ok angles 
   float angle_a = (float)reading_a / (30 * 4) * 360 / 530 * 180;
   float angle_b = (float)reading_b / (30 * 4) * 360 / 530 * 180;
 
@@ -161,12 +175,10 @@ void loop(){
   float res_b = pid_b.calculate(target_b, angle_b);
   
   // perform correction
-  // motor_a.setPower(res_a);
-  motor_b.setPower(res_b);
   motor_a.setPower(res_a);
+  motor_b.setPower(res_b);
 
   // statistics printing
-  return;
   // basic parameters
   printval("R1", angle_a);
   printval("R2", angle_b);
